@@ -394,6 +394,10 @@ MCP（模型上下文协议）允许智能体连接外部服务（如 Filesystem
 | `llm_rate_limit_jitter` | float | `1.0`   | 限流暂停的随机抖动范围（秒），避免并发请求同时恢复          |
 | `llm_acquire_timeout`   | float | `300.0` | 等待获取限流槽的最大超时时间（秒）                          |
 
+流式调用在返回有效输出之前，遇到可识别的瞬时错误可以重试。这包括 OpenAI 兼容流中不带状态码的
+`Our servers are currently overloaded. Please try again later.` 过载错误。
+一旦本次调用已输出文本或工具调用，就不会重放。
+
 **上下文管理：**
 
 | 字段                       | 类型   | 默认值          | 说明                                                  |

@@ -138,6 +138,33 @@ def test_gateway_reported_client_error_is_not_retryable() -> None:
 
 
 @pytest.mark.parametrize(
+    ("status", "kind", "retryable"),
+    [
+        (None, "transient", True),
+        (400, "bad_request", False),
+        (401, "authentication", False),
+    ],
+)
+def test_openai_overload_message_respects_reported_status(
+    status,
+    kind,
+    retryable,
+):
+    error = openai.APIError(
+        "Our servers are currently overloaded. Please try again later.",
+        request=httpx.Request("POST", "https://example.test"),
+        body=None if status is None else {"status_code": status},
+    )
+
+    assert asdict(classify_model_error(error)) == {
+        "kind": kind,
+        "status_code": status,
+        "retryable": retryable,
+        "fallback_eligible": retryable,
+    }
+
+
+@pytest.mark.parametrize(
     "message",
     [
         "status_code=200, ok",

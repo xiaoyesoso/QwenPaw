@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator, cast
 
+import httpx
+import openai
 import pytest
 from agentscope.agent import Agent, InjectionConfig
+from agentscope.credential import OpenAICredential
 from agentscope.message import (
     Msg,
     TextBlock,
@@ -23,6 +27,7 @@ from qwenpaw.agents import model_factory
 from qwenpaw.providers.capping_formatter import _CappingOpenAIFormatter
 from qwenpaw.providers.model_capability_cache import get_capability_cache
 from qwenpaw.providers.model_error_policy import RETRYABLE_STATUS_CODES
+from qwenpaw.providers.openai_chat_model_compat import OpenAIChatModelCompat
 from qwenpaw.providers.rate_limiter import LLMRateLimiter, _limiters
 from qwenpaw.providers.retry_chat_model import (
     RetryChatModel,
@@ -475,6 +480,80 @@ async def _failing_stream_api_error(
         request=None,
         body=body,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("emit_content", [False, True])
+async def test_statusless_openai_sse_overload_retry(emit_content):
+    calls = 0
+    model_id = "statusless-overload-sse-test"
+    overload = "Our servers are currently overloaded. Please try again later."
+    chunk = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": model_id,
+        "choices": [
+            {"index": 0, "delta": {"role": "assistant", "content": "ok"}},
+        ],
+    }
+
+    def respond(_request):
+        nonlocal calls
+        calls += 1
+        frames = []
+        if calls > 1 or emit_content:
+            frames.append(chunk)
+        if calls == 1:
+            frames.append({"error": {"message": overload}})
+        sse = "".join(f"data: {json.dumps(frame)}\n\n" for frame in frames)
+        return httpx.Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            text=sse + "data: [DONE]\n\n",
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(respond),
+    ) as client:
+        model = RetryChatModel(
+            OpenAIChatModelCompat(
+                credential=OpenAICredential(
+                    api_key="test-only",
+                    base_url="https://example.test/v1",
+                ),
+                model=model_id,
+                stream=True,
+                client_kwargs={"http_client": client, "max_retries": 0},
+            ),
+            retry_config=RetryConfig(
+                enabled=True,
+                max_retries=1,
+                backoff_base=0.01,
+                backoff_cap=0.01,
+            ),
+        )
+        result = await model(
+            [Msg(name="user", content=[TextBlock(text="hi")], role="user")],
+        )
+        stream = cast(AsyncGenerator[ChatResponse, None], result)
+        if emit_content:
+            response = await anext(stream)
+            assert any(
+                isinstance(block, TextBlock) and block.text == "ok"
+                for block in response.content
+            )
+            with pytest.raises(openai.APIError, match="currently overloaded"):
+                _ = [response async for response in stream]
+            assert calls == 1
+        else:
+            responses = [response async for response in stream]
+            assert any(
+                isinstance(block, TextBlock) and block.text == "ok"
+                for response in responses
+                for block in response.content
+            )
+            assert calls == 2
 
 
 class _TransientStreamRetryModel:

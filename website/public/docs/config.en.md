@@ -462,6 +462,11 @@ Controls agent runtime behavior, retry strategies, context management, and memor
 | `llm_rate_limit_jitter` | float | `1.0`   | Random jitter range in seconds added to rate limit pause to avoid thundering herd                     |
 | `llm_acquire_timeout`   | float | `300.0` | Maximum timeout in seconds to wait for acquiring a rate limit slot                                    |
 
+Streaming calls can retry recognized transient errors, including the overload
+message `Our servers are currently overloaded. Please try again later.` from
+OpenAI-compatible streams without a status code, before yielding meaningful
+output. Once a call has yielded text or a tool call, it is not replayed.
+
 **Context Management:**
 
 | Field                      | Type   | Default         | Description                                                             |

@@ -41,6 +41,10 @@ _SDK_TRANSIENT_ERRORS = (
     anthropic.APITimeoutError,
     anthropic.InternalServerError,
 )
+# OpenAI-compatible SSE errors can carry this message without a status code.
+_OPENAI_OVERLOAD_MESSAGE = (
+    "our servers are currently overloaded. please try again later."
+)
 
 
 def _is_sdk_rate_limit(exc: Exception) -> bool:
@@ -82,6 +86,11 @@ def classify_model_error(exc: Exception) -> ModelErrorDecision:
             (ConnectionError, TimeoutError),
         )
         or _is_sdk_transient(exc)
+        or (
+            status is None
+            and isinstance(exc, openai.APIError)
+            and message.strip() == _OPENAI_OVERLOAD_MESSAGE
+        )
     ):
         kind = "transient"
     elif any(
